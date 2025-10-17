@@ -27,15 +27,10 @@ class Config:
     block_seconds: float = 1.0
     model_size: str = "small"
     language: str = "en"
-    task: str = "transcribe"
     audio_queue_size: int = 8
     text_queue_size: int = 4
-    control_queue_size: int = 2
     gui_poll_interval_ms: int = 50
     max_buffer_seconds: int = 10
-    beam_size: int = 1
-    temperature: float = 0.0
-    vad_filter: bool = False
 
     @property
     def block_samples(self) -> int:
@@ -98,6 +93,8 @@ def open_stream(config: Config, callback) -> sd.InputStream:
 class TranscriberThread(threading.Thread):
     """Worker thread for whisper transcription."""
 
+    BEAM_SIZE = 1
+
     def __init__(
         self,
         config: Config,
@@ -144,11 +141,8 @@ class TranscriberThread(threading.Thread):
                 # Warm up with 1D mono silence to prime kernels and reduce first-run latency
                 self.model.transcribe(
                     np.zeros(self.config.block_samples, dtype=np.float32),
-                    beam_size=1,
+                    beam_size=self.BEAM_SIZE,
                     language=self.config.language,
-                    task=self.config.task,
-                    temperature=self.config.temperature,
-                    vad_filter=False,
                 )
                 logging.info("Whisper model loaded and warmed up")
                 loaded = True
@@ -169,14 +163,15 @@ class TranscriberThread(threading.Thread):
             except queue.Empty:
                 continue
 
-            # Append to 1D buffer
-            buffer = np.concatenate((buffer, chunk))
-            if buffer.shape[0] > self.config.max_buffer_samples:
-                buffer = buffer[-self.config.max_buffer_samples :]
-            while buffer.shape[0] >= self.config.block_samples:
-                segment = buffer[: self.config.block_samples]
-                buffer = buffer[self.config.block_samples :]
-                self._transcribe_segment(segment)
+            try:
+                buffer = np.concatenate((buffer, chunk))
+                if buffer.shape[0] > self.config.max_buffer_samples:
+                    buffer = buffer[-self.config.max_buffer_samples :]
+                while buffer.shape[0] >= self.config.block_samples:
+                    segment = buffer[: self.config.block_samples]
+                    buffer = buffer[self.config.block_samples :]
+                    self._transcribe_segment(segment)
+            finally:
                 self.audio_queue.task_done()
 
     def _transcribe_segment(self, segment: np.ndarray):
@@ -187,11 +182,8 @@ class TranscriberThread(threading.Thread):
             segment = segment.astype(np.float32, copy=False)
             segments, _ = self.model.transcribe(
                 segment,
-                beam_size=self.config.beam_size,
+                beam_size=self.BEAM_SIZE,
                 language=self.config.language,
-                task=self.config.task,
-                temperature=self.config.temperature,
-                vad_filter=self.config.vad_filter,
             )
             text = " ".join(s.text for s in segments).strip()
             if text:
@@ -346,7 +338,7 @@ def main():
 
     audio_q = queue.Queue(maxsize=cfg.audio_queue_size)
     text_q = queue.Queue(maxsize=cfg.text_queue_size)
-    control_q = queue.Queue(maxsize=cfg.control_queue_size)
+    control_q = queue.Queue(maxsize=1)
     stop_evt = threading.Event()
 
     signal.signal(signal.SIGINT, lambda *_: stop_evt.set())

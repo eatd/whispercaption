@@ -43,7 +43,7 @@ python app.py
 - Press `Ctrl+Shift+C` (left Ctrl) to toggle visibility.
 - Press `Ctrl+C` in the terminal to exit, or close the window.
 
-You can tweak defaults by editing the `Config` dataclass in `app.py` (model size, temperature, buffer durations, etc.).
+You can tweak defaults by editing the `Config` dataclass in `app.py` (model size and buffer durations).
 
 ## GPU & Performance Notes
 - The transcriber tries CUDA first with low-memory compute types (`int8_float16`).
